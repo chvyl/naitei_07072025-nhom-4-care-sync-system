@@ -1,6 +1,9 @@
 package com.example.backend.config;
 
 import com.example.backend.constant.ApiConstants;
+import com.example.backend.security.JwtAuthenticationFilter;
+import com.example.backend.security.RestAccessDeniedHandler;
+import com.example.backend.security.RestAuthenticationEntryPoint;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -15,9 +18,11 @@ import org.springframework.security.config.annotation.method.configuration.Enabl
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
+import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 
 @Configuration
 @EnableWebSecurity
@@ -25,11 +30,16 @@ import org.springframework.security.web.SecurityFilterChain;
 @RequiredArgsConstructor
 public class SecurityConfig {
 
-    private static final String[] PUBLIC_ENDPOINTS = {ApiConstants.AUTH_ENDPOINT + "/**",
-            "/swagger-ui/**", "/api-docs/**", "/swagger-ui.html", "/actuator/**"};
+    private final JwtAuthenticationFilter jwtAuthenticationFilter;
+    private final RestAuthenticationEntryPoint authenticationEntryPoint;
+    private final RestAccessDeniedHandler accessDeniedHandler;
 
-    private static final String[] PUBLIC_GET_ENDPOINTS = {ApiConstants.DOCTORS_ENDPOINT + "/**",
-            ApiConstants.SPECIALTIES_ENDPOINT + "/**"};
+    private static final String[] PUBLIC_ENDPOINTS = {ApiConstants.AUTH_ENDPOINT + "/**",
+            "/swagger-ui/**", "/api-docs/**", "/swagger-ui.html", "/actuator/**",
+            "/api/v1/auth/verify-email"};
+
+    private static final String[] PUBLIC_GET_ENDPOINTS = {ApiConstants.SPECIALTIES_ENDPOINT + "/**",
+            ApiConstants.DOCTORS_ENDPOINT + "/**"}; // Thêm Doctors vào public GET
 
     private static final String[] PATIENT_ENDPOINTS = {ApiConstants.APPOINTMENTS_ENDPOINT + "/**",
             "/payments/**", "/notifications/**", "/feedback/**"};
@@ -40,7 +50,6 @@ public class SecurityConfig {
 
     @Bean
     public RoleHierarchy roleHierarchy() {
-        // ADMIN > DOCTOR > PATIENT
         String hierarchy = "ROLE_ADMIN > ROLE_DOCTOR \n ROLE_DOCTOR > ROLE_PATIENT";
         return RoleHierarchyImpl.fromHierarchy(hierarchy);
     }
@@ -67,9 +76,16 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http.csrf(AbstractHttpConfigurer::disable)
+                .sessionManagement(
+                        session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .exceptionHandling(ex -> ex.authenticationEntryPoint(authenticationEntryPoint)
+                        .accessDeniedHandler(accessDeniedHandler))
+                .addFilterBefore(jwtAuthenticationFilter,
+                        UsernamePasswordAuthenticationFilter.class)
                 .authorizeHttpRequests(authz -> authz.requestMatchers(PUBLIC_ENDPOINTS).permitAll()
                         .requestMatchers(HttpMethod.GET, PUBLIC_GET_ENDPOINTS).permitAll()
-                        .requestMatchers(PATIENT_ENDPOINTS).permitAll()
+                        .requestMatchers(PATIENT_ENDPOINTS).hasRole("PATIENT")
+                        .requestMatchers(ApiConstants.DOCTORS_ENDPOINT + "/me/**").authenticated()
                         .requestMatchers(DOCTOR_ENDPOINTS).hasRole("DOCTOR")
                         .requestMatchers(ADMIN_ENDPOINTS).hasRole("ADMIN").anyRequest()
                         .authenticated());
